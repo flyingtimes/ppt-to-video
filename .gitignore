@@ -20,6 +20,8 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+# characters目录包含数字人核心文件，需要保留在版本控制中
+# characters/
 temp/
 # Virtual environments
 venv/
@@ -49,7 +51,8 @@ Thumbs.db
 input/
 outputs/
 models/
-tools/
+# tools目录包含项目工具类，需要保留在版本控制中
+# tools/
 *.env
 *.mcp.json
 .env

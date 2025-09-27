@@ -8,6 +8,8 @@ from PIL import Image, ImageDraw
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from src.video_generator import DigitalHumanVideoGenerator
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,8 +19,8 @@ class VideoProcessor:
     # 字幕配置类
     class SubtitleConfig:
         """字幕配置"""
-        FONT_SIZE = 36
-        TEXT_COLOR = (255, 87, 34, 255)  # 深橙色 #FF5722
+        FONT_SIZE = 20
+        TEXT_COLOR = (255, 255, 224, 255)  # 浅黄色
         STROKE_COLOR = (0, 0, 0, 255)  # 黑色描边
         STROKE_WIDTH = 1
         LINE_SPACING = 5
@@ -41,6 +43,7 @@ class VideoProcessor:
     def __init__(self):
         self.test_full_video = Path("test/full.mp4")
         self.test_head_video = Path("test/head.mp4")
+        self.video_generator = DigitalHumanVideoGenerator()
         
         # 检查测试视频文件是否存在
         if not self.test_full_video.exists():
@@ -92,71 +95,87 @@ class VideoProcessor:
             生成的视频文件路径
         """
         try:
-            # 根据模式选择测试视频
-            if page_data['is_full_mode']:
-                source_video = self.test_full_video
-                logger.info(f"第 {page_number} 页使用Full模式")
-            else:
-                source_video = self.test_head_video
-                logger.info(f"第 {page_number} 页使用Head模式")
+            # 获取备注文本
+            notes_text = ""
+            if 'notes_file' in page_data:
+                try:
+                    with open(page_data['notes_file'], 'r', encoding='utf-8') as f:
+                        notes_text = f.read().strip()
+                except Exception as e:
+                    logger.warning(f"读取备注文件失败: {e}")
             
-            if not source_video.exists():
-                logger.error(f"源视频文件不存在: {source_video}")
-                return None
+            # 判断模式
+            is_full_mode = page_data['is_full_mode']
+            mode = "full" if is_full_mode else "head"
             
-            # 处理视频组合
-            if page_data['is_full_mode']:
-                # Full模式：直接使用数字人视频，但需要添加字幕
-                # 获取备注文本作为字幕
-                subtitle_text = ""
-                if 'notes_file' in page_data:
-                    try:
-                        with open(page_data['notes_file'], 'r', encoding='utf-8') as f:
-                            subtitle_text = f.read().strip()
-                    except Exception as e:
-                        logger.warning(f"读取字幕文件失败: {e}")
-                
-                # 如果有字幕，使用combine_slide_with_video添加字幕
-                if subtitle_text:
-                    success = self.combine_slide_with_video(
-                        "",  # 不需要slide_image
-                        str(source_video),
-                        True,  # Full模式
-                        str(page_data['video_file']),
-                        work_dir,
-                        subtitle_text,
-                        page_number
+            logger.info(f"第 {page_number} 页使用{mode.upper()}模式")
+            
+            # 创建临时视频文件路径
+            temp_video_path = work_dir / f"temp_video_{page_number:03d}.mp4"
+            
+            # 尝试生成数字人视频
+            generated_video = None
+            if notes_text:
+                try:
+                    # 生成数字人视频
+                    video_result = self.video_generator.generate_video(
+                        text=notes_text,
+                        mode=mode,
+                        output_path=str(temp_video_path)
                     )
-                    if not success:
-                        logger.error(f"第 {page_number} 页视频组合失败")
-                        return None
-                else:
-                    # 没有字幕，直接复制视频
-                    import shutil
-                    shutil.copy2(source_video, page_data['video_file'])
-            else:
-                # Head模式：组合PPT幻灯片和头部数字人视频
-                # 获取备注文本作为字幕
-                subtitle_text = ""
-                if 'notes_file' in page_data:
-                    try:
-                        with open(page_data['notes_file'], 'r', encoding='utf-8') as f:
-                            subtitle_text = f.read().strip()
-                    except Exception as e:
-                        logger.warning(f"读取字幕文件失败: {e}")
+                    
+                    if video_result and video_result.get('video_path'):
+                        generated_video = video_result['video_path']
+                        logger.info(f"第 {page_number} 页数字人视频生成成功")
+                    else:
+                        logger.warning(f"第 {page_number} 页数字人视频生成失败，使用示例视频")
+                except Exception as e:
+                    logger.warning(f"第 {page_number} 页数字人视频生成异常: {e}，使用示例视频")
+            
+            # 如果生成失败，使用示例视频
+            if not generated_video:
+                source_video = self.test_full_video if is_full_mode else self.test_head_video
+                if not source_video.exists():
+                    logger.error(f"示例视频文件不存在: {source_video}")
+                    return None
                 
+                # 复制示例视频到临时文件
+                import shutil
+                shutil.copy2(source_video, temp_video_path)
+                generated_video = str(temp_video_path)
+                logger.info(f"第 {page_number} 页使用示例视频")
+            
+            # 处理视频组合和字幕
+            if is_full_mode:
+                # Full模式：数字人视频 + 字幕
+                success = self.combine_slide_with_video(
+                    "",  # 不需要slide_image
+                    generated_video,
+                    True,  # Full模式
+                    str(page_data['video_file']),
+                    work_dir,
+                    notes_text,
+                    page_number
+                )
+            else:
+                # Head模式：组合PPT幻灯片和头部数字人视频 + 字幕
                 success = self.combine_slide_with_video(
                     str(page_data['slide_image']),
-                    str(source_video),
+                    generated_video,
                     False,
                     str(page_data['video_file']),
                     work_dir,
-                    subtitle_text,
+                    notes_text,
                     page_number
                 )
-                if not success:
-                    logger.error(f"第 {page_number} 页视频组合失败")
-                    return None
+            
+            # 删除临时文件
+            if os.path.exists(temp_video_path):
+                os.remove(temp_video_path)
+            
+            if not success:
+                logger.error(f"第 {page_number} 页视频组合失败")
+                return None
             
             logger.info(f"第 {page_number} 页视频生成完成: {page_data['video_file']}")
             return str(page_data['video_file'])

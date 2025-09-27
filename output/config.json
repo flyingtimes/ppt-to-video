@@ -1,0 +1,23 @@
+{
+  "runninghub_config": {
+    "api_key": "481e7653f5334058bd642478fdca8ddd",
+    "base_url": "https://www.runninghub.cn",
+    "webapp_id": "1971965779661025281"
+  },
+  "character_config": {
+    "image_path": "characters/man/input.png",
+    "reference_audio_path": "characters/man/reference.mp3",
+    "full_studio_image_path": "models/full_studio_image.png",
+    "head_studio_image_path": "models/head_studio_image.png"
+  },
+  "tasks": {
+    "full_videos": [],
+    "head_videos": []
+  },
+  "studio_images": {
+    "full": "",
+    "head": ""
+  },
+  "current_project": "",
+  "last_update": ""
+}

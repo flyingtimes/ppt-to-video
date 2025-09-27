@@ -1,97 +1,103 @@
 # RunningHub AI 应用使用文档
 
-## 概述
-RunningHub 是一个AI驱动的数字人视频生成平台，能够将文本内容转换为数字人播报视频。
-
-## 支持的视频模式
-
-### 1. Full模式（全屏数字人）
-- **标识**：备注以 `[full]` 开头
-- **比例**：16:9 或 4:3
-- **描述**：生成满屏的数字人播报讲解视频
-- **适用场景**：需要突出数字人表现力的内容
-
-### 2. Head模式（头部数字人）
-- **标识**：备注不以 `[full]` 开头
-- **描述**：仅生成包含头部的数字人讲解视频
-- **适用场景**：需要与PPT内容配合展示的内容
-
-## API使用方法
-
-### 认证配置
-```python
-# 需要在.env文件中配置以下环境变量
-RUNNINGHUB_API_KEY=your_api_key_here
-RUNNINGHUB_BASE_URL=https://api.runninghub.com/v1
+数字人播报工作流的调用示例如下，节点54代表是full模式的视频还是head模式的视频，节点55为1代表输出自动修图的工作室效果的图片，节点55为2代表不需要。
+一般第一次生成全身视频或者第一次生成肖像视频的时候，才需要输出工作室效果图片，并保存起来。后续调用的时候，直接使用全身和肖像工作室效果图生成视频，此时节点55的参数为2
 ```
-
-### 基本参数
-- `text`: 播报文本内容（必填）
-- `mode`: 视频模式（full/head，默认head）
-- `voice_type`: 声音类型
-- `resolution`: 分辨率设置
-- `speed`: 语速控制（0.5-2.0）
-- `emotion`: 情感表达
-
-### 支持的声音类型
-- `male_standard`: 男声标准
-- `male_warm`: 男声温暖
-- `female_standard`: 女声标准
-- `female_sweet`: 女声甜美
-
-### 支持的分辨率
-- Full模式：`1920x1080`（16:9）、`1440x1080`（4:3）
-- Head模式：`720x720`（方形头像）
-
-### 调用示例
-```python
-# Full模式调用
-response = runninghub_api.generate_video(
-    text="您的播报内容",
-    mode="full",
-    resolution="1920x1080",
-    voice_type="male_standard",
-    speed=1.0
-)
-
-# Head模式调用  
-response = runninghub_api.generate_video(
-    text="您的播报内容",
-    mode="head",
-    voice_type="female_standard",
-    speed=1.2,
-    emotion="happy"
-)
+curl --location --request POST 'https://www.runninghub.cn/task/openapi/ai-app/run' \
+--header 'Host: www.runninghub.cn' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "webappId": "1971965779661025281",
+    "apiKey": "481e7653f5334058bd642478fdca8ddd",
+    "nodeInfoList": [
+        {
+            "nodeId": "55",
+            "fieldName": "value",
+            "fieldValue": "1",
+            "description": "是否需要自动修图（1:需要 2:不需要）"
+        },
+        {
+            "nodeId": "54",
+            "fieldName": "value",
+            "fieldValue": "2",
+            "description": "1:全身 2: 肖像"
+        },
+        {
+            "nodeId": "48",
+            "fieldName": "image",
+            "fieldValue": "b6ce68aa6738ff0defde5cfc0ec34c52cd0918d4089fa0ecf74af4c168452eb3.gif",
+            "description": "人物图片"
+        },
+        {
+            "nodeId": "47",
+            "fieldName": "audio",
+            "fieldValue": "007c991b216f73404eead02468903ce7400ad59e6f3971833556eca51ddb24e7.mp3",
+            "description": "参考音频"
+        },
+        {
+            "nodeId": "38",
+            "fieldName": "text",
+            "fieldValue": "我的汇报就到这里",
+            "description": "要说的话"
+        }
+    ]
+}'
 ```
-
-### 响应格式
-```json
+返回的结果示例如下,taskStatus为RUNNING代表人物还没执行完，SUCCESS代表执行完毕，一定要将taskId记录下来供后续获取结果用
+```
 {
-    "success": true,
-    "video_id": "vh_123456789",
-    "download_url": "https://storage.runninghub.com/videos/vh_123456789.mp4",
-    "duration": 30.5,
-    "file_size": 10485760
+    "code": 0,
+    "msg": "success",
+    "data": {
+        "netWssUrl": "wss://www.runninghub.cn:443/ws/c_instance?c_host=222.186.161.123&c_port=85&clientId=14caa1db2110a81629c101b9bb4cb0ce&workflowId=1876205853438365698&Rh-Comfy-Auth=eyJ1c2VySWQiOiJkZTBkYjZmMjU2NGM4Njk3YjA3ZGY1NWE3N2YwN2JlOSIsInNpZ25FeHBpcmUiOjE3NDQxMTI1MjEyMzYsInRzIjoxNzQzNTA3NzIxMjM2LCJzaWduIjoiZDExOTE0MzkwMjJlNjViMjQ5MjU2YzU2ZmQxYTUwZjUifQ%3D%3D",
+        "taskId": "1907035719658053634",
+        "clientId": "14caa1db2110a81629c101b9bb4cb0ce",
+        "taskStatus": "RUNNING",
+        "promptTips": "{\"result\": true, \"error\": null, \"outputs_to_execute\": [\"115\", \"129\", \"124\"], \"node_errors\": {}}"
+    }
 }
 ```
-
-## 错误处理
-- 网络连接问题：检查网络连接和API服务状态
-- API配额限制：检查账户余额和调用次数限制
-- 文本内容违规检查：确保文本内容符合平台规范
-- 认证失败：检查API密钥是否正确配置
-
-## 限制和注意事项
-1. 文本长度限制：建议每页备注文字控制在200字以内，最多500字
-2. 支持的语言：中文、英文
-3. 生成时间：根据视频长度不同，通常需要1-5分钟
-4. 文件格式：输出为MP4格式，H.264编码
-5. 账户限制：免费用户每月可生成10分钟视频，付费用户无限制
-6. 内容审核：所有文本内容都会经过AI内容审核
-
-## 最佳实践
-1. 文本预处理：去除特殊字符，确保标点符号正确
-2. 分段处理：长文本建议分段生成后再合并
-3. 质量检查：生成后进行视频质量检查
-4. 错误重试：网络错误时建议重试机制
-5. 缓存管理：相同文本可以缓存结果避免重复调用
+查询任务状态和结果的示例如下：
+```
+curl --location --request POST 'https://www.runninghub.cn/task/openapi/status' \
+--header 'Host: www.runninghub.cn' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "apiKey": "请输入自己的apiKey",
+    "taskId": "1904152026220003329"
+}'
+```
+返回的响应如下，其中data可以是["QUEUED","RUNNING","FAILED","SUCCESS"]
+```
+{
+  "code": 0,
+  "msg": "",
+  "data": ""
+}
+```
+如果查询到任务的结果是SUCCESS，则可以使用以下示例获取输出结果：
+```
+curl --location --request POST 'https://www.runninghub.cn/task/openapi/outputs' \
+--header 'Host: www.runninghub.cn' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "apiKey": "请输入自己的apiKey",
+    "taskId": "1904152026220003329"
+}'
+```
+返回的信息如下：
+```
+{
+    "code": 0,
+    "msg": "success",
+    "data": [
+        {
+            "fileUrl": "https://rh-images.xiaoyaoyou.com/de0db6f2564c8697b07df55a77f07be9/output/ComfyUI_00033_hpgko_1742822929.png",
+            "fileType": "png",
+            "taskCostTime": "0",
+            "nodeId": "9"
+        }
+    ]
+}
+```
+在我们这个数字人工作流中，主要是获取nodeId为60的工作室效果的图片，和nodeId为22的输出视频文件，使用下载程序下载fileUrl可以获取结果

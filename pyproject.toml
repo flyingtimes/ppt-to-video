@@ -11,6 +11,7 @@ dependencies = [
     "pdf2image>=1.16.0",
     "Pillow>=9.0.0",
     "matplotlib>=3.0.0",
+    "requests>=2.32.4",
 ]
 requires-python = ">=3.8"
 readme = "README.md"
