@@ -64,3 +64,23 @@ tools/
 # Test files
 test/
 !test/__init__.py
+
+# Claude specific
+.claude/
+
+# Video processing files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+
+# PPT files
+*.pptx
+*.ppt
+
+# Model and cache directories
+.cache/
+.huggingface/
+.modelscope/
