@@ -4,6 +4,7 @@
 import os
 import subprocess
 import logging
+from PIL import Image, ImageDraw
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -22,6 +23,37 @@ class VideoProcessor:
             logger.warning(f"测试全屏视频文件不存在: {self.test_full_video}")
         if not self.test_head_video.exists():
             logger.warning(f"测试头部视频文件不存在: {self.test_head_video}")
+    
+    def create_circular_mask(self, size: int, output_path: str) -> bool:
+        """
+        创建圆形遮罩图像
+        
+        Args:
+            size: 遮罩大小（正方形边长）
+            output_path: 输出文件路径
+            
+        Returns:
+            是否成功
+        """
+        try:
+            # 创建RGBA图像（支持透明度）
+            mask = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(mask)
+            
+            # 绘制白色圆形（不透明）
+            center = size // 2
+            radius = size // 2
+            draw.ellipse([center - radius, center - radius, center + radius, center + radius], 
+                        fill=(255, 255, 255, 255))
+            
+            # 保存遮罩图像
+            mask.save(output_path)
+            logger.info(f"圆形遮罩已创建: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"创建圆形遮罩失败: {e}")
+            return False
     
     def process_page(self, page_data: Dict[str, Any], page_number: int, work_dir: Path) -> Optional[str]:
         """
@@ -59,7 +91,8 @@ class VideoProcessor:
                     str(page_data['slide_image']),
                     str(source_video),
                     False,
-                    str(page_data['video_file'])
+                    str(page_data['video_file']),
+                    work_dir
                 )
                 if not success:
                     logger.error(f"第 {page_number} 页视频组合失败")
@@ -135,7 +168,7 @@ class VideoProcessor:
             logger.error(f"合并视频失败: {e}")
             return None
     
-    def combine_slide_with_video(self, slide_image: str, video_file: str, is_full_mode: bool, output_file: str) -> bool:
+    def combine_slide_with_video(self, slide_image: str, video_file: str, is_full_mode: bool, output_file: str, work_dir: Path) -> bool:
         """
         组合PPT幻灯片和数字人视频
         
@@ -156,18 +189,24 @@ class VideoProcessor:
                 return True
             else:
                 # Head模式：组合幻灯片和头部视频
-                # 幻灯片作为背景，头部视频放在左下角
+                # 幻灯片作为背景，头部视频使用圆形遮罩放在左下角
+                # 创建圆形遮罩
+                mask_path = work_dir / "circular_mask.png"
+                if not self.create_circular_mask(320, str(mask_path)):
+                    logger.error("创建圆形遮罩失败")
+                    return False
+                
                 cmd = [
                     'ffmpeg',
                     '-i', slide_image,
                     '-i', video_file,
+                    '-i', str(mask_path),
                     '-filter_complex', 
-                    '[0:v]scale=1920:1080[bg];[1:v]scale=320:320[fg];[bg][fg]overlay=50:710',
+                    '[0:v]scale=1920:1080[bg];[1:v]scale=320:320[fg];[2:v]alphaextract[mask];[fg][mask]alphamerge[masked_fg];[bg][masked_fg]overlay=1550:710',
                     '-c:v', 'libx264',
                     '-preset', 'fast',
                     '-crf', '23',
                     '-c:a', 'copy',
-                    '-shortest',
                     '-y',  # 覆盖输出文件
                     output_file
                 ]

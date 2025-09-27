@@ -635,6 +635,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pdf2image" },
+    { name = "pillow", version = "10.4.0", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "python-dotenv", version = "1.0.1", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.9'" },
     { name = "python-dotenv", version = "1.1.1", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "python-pptx" },
@@ -653,6 +655,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pdf2image", specifier = ">=1.16.0" },
+    { name = "pillow", specifier = ">=9.0.0" },
     { name = "python-dotenv", specifier = ">=0.19.0" },
     { name = "python-pptx", specifier = ">=0.6.21" },
 ]
