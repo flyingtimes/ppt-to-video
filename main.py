@@ -6,11 +6,23 @@ import os
 import json
 import time
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from dotenv import load_dotenv
+
+try:
+    import fitz  # PyMuPDF
+    HAS_FITZ = True
+except ImportError:
+    try:
+        from pdf2image import convert_from_path
+        HAS_FITZ = False
+    except ImportError:
+        HAS_FITZ = False
 
 from src.ppt_reader import PPTReader
 from src.video_processor import VideoProcessor
@@ -66,7 +78,107 @@ class TaskManager:
                     logger.info(f"📂 自动检测到任务状态文件: {latest_json}")
         except Exception as e:
             logger.warning(f"⚠️ 自动检测任务状态文件失败: {e}")
-    
+
+    def find_slide_image(self, page_num: int) -> Optional[str]:
+        """
+        查找指定页码的幻灯片图片
+
+        Args:
+            page_num: 页码
+
+        Returns:
+            图片文件路径或None
+        """
+        try:
+            # 查找temp目录下的幻灯片图片
+            temp_dir = Path("temp")
+            if not temp_dir.exists():
+                logger.warning(f"temp目录不存在")
+                return None
+
+            # 尝试多种文件名格式
+            slide_patterns = [
+                f"page_{page_num}.png",           # page_2.png
+                f"page_{page_num:03d}.png"        # page_002.png
+            ]
+
+            for pattern in slide_patterns:
+                slide_path = temp_dir / pattern
+                if slide_path.exists():
+                    logger.info(f"找到幻灯片图片: {slide_path}")
+                    return str(slide_path)
+
+            logger.warning(f"未找到第{page_num}页的幻灯片图片")
+            return None
+
+        except Exception as e:
+            logger.error(f"查找幻灯片图片时发生错误: {e}")
+            return None
+
+    def recapture_pdf_page(self, page_num: int) -> Optional[str]:
+        """
+        重新截取PDF指定页面的图片
+
+        Args:
+            page_num: 页码
+
+        Returns:
+            图片文件路径或None
+        """
+        try:
+            if not HAS_FITZ:
+                logger.error("缺少必要的PDF处理库，请安装PyMuPDF: pip install PyMuPDF")
+                return None
+
+            # 查找input目录下的PDF文件
+            input_dir = Path("input")
+            if not input_dir.exists():
+                logger.error("input目录不存在")
+                return None
+
+            # 查找PDF文件
+            pdf_files = list(input_dir.glob("*.pdf"))
+            if not pdf_files:
+                logger.error("input目录中未找到PDF文件")
+                return None
+
+            # 使用第一个找到的PDF文件
+            pdf_file = pdf_files[0]
+            logger.info(f"使用PDF文件: {pdf_file}")
+
+            # 打开PDF文件
+            doc = fitz.open(str(pdf_file))
+
+            # 检查页码是否有效
+            if page_num < 1 or page_num > len(doc):
+                logger.error(f"页码 {page_num} 超出范围 (1-{len(doc)})")
+                doc.close()
+                return None
+
+            # 创建temp目录
+            temp_dir = Path("temp")
+            temp_dir.mkdir(exist_ok=True)
+
+            # 获取指定页面
+            page = doc[page_num - 1]
+
+            # 渲染页面为图片
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2倍分辨率
+
+            # 保存图片
+            image_path = temp_dir / f"page_{page_num}.png"
+            pix.save(str(image_path))
+
+            # 关闭PDF文件
+            doc.close()
+
+            logger.info(f"成功重新截取第{page_num}页幻灯片图片到: {image_path}")
+            return str(image_path)
+
+        except Exception as e:
+            logger.error(f"重新截取PDF第{page_num}页失败: {e}")
+            return None
+
     def load_task_status(self) -> Dict[str, Any]:
         """加载任务状态"""
         try:
@@ -562,65 +674,78 @@ class TaskManager:
                         try:
                             from src.video_processor import VideoProcessor
                             video_processor = VideoProcessor()
-                            
-                            # 获取PPT幻灯片路径
+
+                            # 获取PPT幻灯片路径 - 使用新的查找逻辑
                             slide_image = task.get('pdf_page_path', '')
                             if not slide_image or not os.path.exists(slide_image):
-                                logger.error(f"❌ 找不到PPT幻灯片文件: {slide_image}")
-                                # 使用原始视频
-                                task['status'] = 'completed'
-                                task['file_size'] = file_size
-                            else:
-                                # 创建临时工作目录
-                                import tempfile
-                                work_dir = Path(tempfile.mkdtemp())
-                                logger.info(f"📁 临时工作目录: {work_dir}")
-                                
-                                # 备份原始视频文件
-                                original_video = task['video_path']
-                                backup_video = str(work_dir / f"original_video_{page_num:03d}.mp4")
-                                import shutil
-                                shutil.copy2(original_video, backup_video)
-                                
-                                # 使用video_processor组合PPT和数字人视频
-                                logger.info(f"🔧 开始组合PPT幻灯片和数字人视频...")
-                                success = video_processor.combine_slide_with_video(
-                                    slide_image=slide_image,
-                                    video_file=backup_video,
-                                    is_full_mode=False,  # head模式
-                                    output_file=original_video,
-                                    work_dir=work_dir,
-                                    subtitle_text=task.get('notes', ''),
-                                    page_number=page_num
-                                )
-                                
-                                if success:
-                                    # 更新文件大小
-                                    if os.path.exists(original_video):
-                                        new_file_size = os.path.getsize(original_video)
-                                        task['file_size'] = new_file_size
-                                        logger.info(f"🎉 本地视频组合完成！")
-                                        logger.info(f"新文件大小: {new_file_size / 1024 / 1024:.2f} MB")
+                                logger.warning(f"⚠️ 配置中的幻灯片图片不存在: {slide_image}")
+                                # 尝试查找幻灯片图片
+                                slide_image = self.find_slide_image(page_num)
+                                if not slide_image:
+                                    logger.warning(f"⚠️ 未找到第{page_num}页幻灯片图片，尝试重新截取PDF...")
+                                    # 尝试重新截取PDF图片
+                                    slide_image = self.recapture_pdf_page(page_num)
+                                    if slide_image:
+                                        logger.info(f"✅ 成功重新截取第{page_num}页幻灯片图片")
                                     else:
-                                        logger.error(f"❌ 组合后的视频文件不存在: {original_video}")
-                                        # 恢复原始文件
-                                        shutil.copy2(backup_video, original_video)
+                                        logger.error(f"❌ 第{page_num}页重新截取PDF失败，无法进行Head模式组合")
+                                        # 使用原始视频，但标记为部分完成
+                                        task['status'] = 'completed'
                                         task['file_size'] = file_size
+                                        task['error_message'] = 'Head模式组合失败：缺少幻灯片图片'
+                                        return True
+
+                            # 创建临时工作目录
+                            work_dir = Path(tempfile.mkdtemp())
+                            logger.info(f"📁 临时工作目录: {work_dir}")
+
+                            # 备份原始视频文件
+                            original_video = task['video_path']
+                            backup_video = str(work_dir / f"original_video_{page_num:03d}.mp4")
+                            shutil.copy2(original_video, backup_video)
+
+                            # 使用video_processor组合PPT和数字人视频
+                            logger.info(f"🔧 开始组合PPT幻灯片和数字人视频...")
+                            success = video_processor.combine_slide_with_video(
+                                slide_image=slide_image,
+                                video_file=backup_video,
+                                is_full_mode=False,  # head模式
+                                output_file=original_video,
+                                work_dir=work_dir,
+                                subtitle_text=task.get('notes', ''),
+                                page_number=page_num
+                            )
+
+                            if success:
+                                # 更新文件大小
+                                if os.path.exists(original_video):
+                                    new_file_size = os.path.getsize(original_video)
+                                    task['file_size'] = new_file_size
+                                    logger.info(f"🎉 Head模式本地视频组合完成！")
+                                    logger.info(f"新文件大小: {new_file_size / 1024 / 1024:.2f} MB")
                                 else:
-                                    logger.error(f"❌ 本地视频组合失败，使用原始视频")
+                                    logger.error(f"❌ 组合后的视频文件不存在: {original_video}")
                                     # 恢复原始文件
                                     shutil.copy2(backup_video, original_video)
                                     task['file_size'] = file_size
-                                
-                                # 清理临时目录
-                                shutil.rmtree(work_dir, ignore_errors=True)
-                                
+                                    task['error_message'] = 'Head模式组合后文件不存在'
+                            else:
+                                logger.error(f"❌ Head模式本地视频组合失败，使用原始视频")
+                                # 恢复原始文件
+                                shutil.copy2(backup_video, original_video)
+                                task['file_size'] = file_size
+                                task['error_message'] = 'Head模式组合失败'
+
+                            # 清理临时目录
+                            shutil.rmtree(work_dir, ignore_errors=True)
+
                         except Exception as e:
-                            logger.error(f"❌ 本地视频组合时发生异常: {e}")
+                            logger.error(f"❌ Head模式本地视频组合时发生异常: {e}")
                             import traceback
                             logger.error(f"错误详情: {traceback.format_exc()}")
                             # 组合失败，但任务仍然完成，使用原始视频
                             task['file_size'] = file_size
+                            task['error_message'] = f'Head模式组合异常: {str(e)}'
                     else:
                         # full模式，直接使用原始视频
                         task['file_size'] = file_size
@@ -833,7 +958,7 @@ class TaskManager:
             failed_count = 0
             
             for task in task_status['tasks']:
-                if task['status'] == 'completed' and task.get('runninghub_task_id'):
+                if task['status'] in ['completed', 'downloading'] and task.get('runninghub_task_id'):
                     task_id = task['runninghub_task_id']
                     video_path = task.get('video_path')
                     
@@ -885,52 +1010,72 @@ class TaskManager:
                                         try:
                                             from src.video_processor import VideoProcessor
                                             video_processor = VideoProcessor()
-                                            
-                                            # 获取PPT幻灯片路径
+
+                                            # 获取PPT幻灯片路径 - 使用新的查找逻辑
+                                            page_num = task['page_number']
                                             slide_image = task.get('pdf_page_path', '')
                                             if not slide_image or not os.path.exists(slide_image):
-                                                logger.error(f"❌ 找不到PPT幻灯片文件: {slide_image}")
-                                            else:
-                                                # 创建临时工作目录
-                                                import tempfile
-                                                work_dir = Path(tempfile.mkdtemp())
-                                                logger.info(f"📁 临时工作目录: {work_dir}")
-                                                
-                                                # 备份原始视频文件
-                                                original_video = video_path
-                                                backup_video = str(work_dir / f"original_video_{task['page_number']:03d}.mp4")
-                                                import shutil
-                                                shutil.copy2(original_video, backup_video)
-                                                
-                                                # 使用video_processor组合PPT和数字人视频
-                                                logger.info(f"🔧 开始组合PPT幻灯片和数字人视频...")
-                                                success = video_processor.combine_slide_with_video(
-                                                    slide_image=slide_image,
-                                                    video_file=backup_video,
-                                                    is_full_mode=False,  # head模式
-                                                    output_file=original_video,
-                                                    work_dir=work_dir,
-                                                    subtitle_text=task.get('notes', ''),
-                                                    page_number=task['page_number']
-                                                )
-                                                
-                                                if success:
-                                                    # 更新文件大小
-                                                    if os.path.exists(original_video):
-                                                        new_file_size = os.path.getsize(original_video)
-                                                        task['file_size'] = new_file_size
-                                                        logger.info(f"🎉 本地视频组合完成！")
-                                                        logger.info(f"新文件大小: {new_file_size / 1024 / 1024:.2f} MB")
+                                                logger.warning(f"⚠️ 配置中的幻灯片图片不存在: {slide_image}")
+                                                # 尝试查找幻灯片图片
+                                                slide_image = self.find_slide_image(page_num)
+                                                if not slide_image:
+                                                    logger.warning(f"⚠️ 未找到第{page_num}页幻灯片图片，尝试重新截取PDF...")
+                                                    # 尝试重新截取PDF图片
+                                                    slide_image = self.recapture_pdf_page(page_num)
+                                                    if slide_image:
+                                                        logger.info(f"✅ 成功重新截取第{page_num}页幻灯片图片")
+                                                    else:
+                                                        logger.error(f"❌ 第{page_num}页重新截取PDF失败，跳过Head模式组合")
+                                                        task['error_message'] = 'Head模式组合失败：缺少幻灯片图片'
+                                                        continue
+
+                                            # 创建临时工作目录
+                                            work_dir = Path(tempfile.mkdtemp())
+                                            logger.info(f"📁 临时工作目录: {work_dir}")
+
+                                            # 备份原始视频文件
+                                            original_video = video_path
+                                            backup_video = str(work_dir / f"original_video_{page_num:03d}.mp4")
+                                            shutil.copy2(original_video, backup_video)
+
+                                            # 使用video_processor组合PPT和数字人视频
+                                            logger.info(f"🔧 开始组合PPT幻灯片和数字人视频...")
+                                            success = video_processor.combine_slide_with_video(
+                                                slide_image=slide_image,
+                                                video_file=backup_video,
+                                                is_full_mode=False,  # head模式
+                                                output_file=original_video,
+                                                work_dir=work_dir,
+                                                subtitle_text=task.get('notes', ''),
+                                                page_number=page_num
+                                            )
+
+                                            if success:
+                                                # 更新文件大小
+                                                if os.path.exists(original_video):
+                                                    new_file_size = os.path.getsize(original_video)
+                                                    task['file_size'] = new_file_size
+                                                    logger.info(f"🎉 Head模式本地视频组合完成！")
+                                                    logger.info(f"新文件大小: {new_file_size / 1024 / 1024:.2f} MB")
                                                 else:
-                                                    logger.error(f"❌ 本地视频组合失败，使用原始视频")
+                                                    logger.error(f"❌ 组合后的视频文件不存在: {original_video}")
                                                     # 恢复原始文件
                                                     shutil.copy2(backup_video, original_video)
-                                                
-                                                # 清理临时目录
-                                                shutil.rmtree(work_dir, ignore_errors=True)
-                                                
+                                                    task['error_message'] = 'Head模式组合后文件不存在'
+                                            else:
+                                                logger.error(f"❌ Head模式本地视频组合失败，使用原始视频")
+                                                # 恢复原始文件
+                                                shutil.copy2(backup_video, original_video)
+                                                task['error_message'] = 'Head模式组合失败'
+
+                                            # 清理临时目录
+                                            shutil.rmtree(work_dir, ignore_errors=True)
+
                                         except Exception as e:
-                                            logger.error(f"❌ 本地视频组合时发生异常: {e}")
+                                            logger.error(f"❌ Head模式本地视频组合时发生异常: {e}")
+                                            import traceback
+                                            logger.error(f"错误详情: {traceback.format_exc()}")
+                                            task['error_message'] = f'Head模式组合异常: {str(e)}'
                                     break
                                 else:
                                     logger.error(f"❌ 第{task['page_number']}页视频下载失败")
@@ -1058,7 +1203,7 @@ def main():
                 
                 # 检查已完成任务的视频文件是否存在
                 logger.info(f"🔍 检查已完成任务的视频文件...")
-                completed_tasks = [task for task in task_status['tasks'] if task['status'] == 'completed']
+                completed_tasks = [task for task in task_status['tasks'] if task['status'] in ['completed', 'downloading']]
                 missing_videos = []
                 
                 for task in completed_tasks:
@@ -1092,7 +1237,7 @@ def main():
         elif task_status['tasks'] and task_status['status'] == 'completed':
             # 检查已完成任务的视频文件是否存在
             logger.info(f"🔍 检查已完成任务的视频文件...")
-            completed_tasks = [task for task in task_status['tasks'] if task['status'] == 'completed']
+            completed_tasks = [task for task in task_status['tasks'] if task['status'] in ['completed', 'downloading']]
             missing_videos = []
             
             for task in completed_tasks:

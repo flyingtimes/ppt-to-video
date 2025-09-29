@@ -42,15 +42,7 @@ class VideoProcessor:
         ]
     
     def __init__(self):
-        self.test_full_video = Path("test/full.mp4")
-        self.test_head_video = Path("test/head.mp4")
         self.video_generator = DigitalHumanVideoGenerator()
-        
-        # 检查测试视频文件是否存在
-        if not self.test_full_video.exists():
-            logger.warning(f"测试全屏视频文件不存在: {self.test_full_video}")
-        if not self.test_head_video.exists():
-            logger.warning(f"测试头部视频文件不存在: {self.test_head_video}")
     
     def create_circular_mask(self, size: int, output_path: str) -> bool:
         """

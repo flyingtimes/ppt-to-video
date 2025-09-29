@@ -14,6 +14,15 @@ from typing import List, Dict, Any, Optional
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from video_processor import VideoProcessor
+try:
+    import fitz  # PyMuPDF
+    HAS_FITZ = True
+except ImportError:
+    try:
+        from pdf2image import convert_from_path
+        HAS_FITZ = False
+    except ImportError:
+        HAS_FITZ = False
 
 def setup_logging():
     """设置日志"""
@@ -73,13 +82,79 @@ def get_page_info_from_filename(filename: str) -> Dict[str, Any]:
     
     return page_info
 
+def recapture_pdf_page(page_num: int) -> Optional[str]:
+    """
+    重新截取PDF指定页面的图片
+
+    Args:
+        page_num: 页码
+
+    Returns:
+        图片文件路径或None
+    """
+    logger = logging.getLogger(__name__)
+
+    if not HAS_FITZ:
+        logger.error("缺少必要的PDF处理库，请安装PyMuPDF: pip install PyMuPDF")
+        return None
+
+    try:
+        # 查找input目录下的PDF文件
+        input_dir = Path("input")
+        if not input_dir.exists():
+            logger.error("input目录不存在")
+            return None
+
+        # 查找PDF文件
+        pdf_files = list(input_dir.glob("*.pdf"))
+        if not pdf_files:
+            logger.error("input目录中未找到PDF文件")
+            return None
+
+        # 使用第一个找到的PDF文件
+        pdf_file = pdf_files[0]
+        logger.info(f"使用PDF文件: {pdf_file}")
+
+        # 打开PDF文件
+        doc = fitz.open(str(pdf_file))
+
+        # 检查页码是否有效
+        if page_num < 1 or page_num > len(doc):
+            logger.error(f"页码 {page_num} 超出范围 (1-{len(doc)})")
+            doc.close()
+            return None
+
+        # 创建temp目录
+        temp_dir = Path("temp")
+        temp_dir.mkdir(exist_ok=True)
+
+        # 获取指定页面
+        page = doc[page_num - 1]
+
+        # 渲染页面为图片
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2倍分辨率
+
+        # 保存图片
+        image_path = temp_dir / f"page_{page_num}.png"
+        pix.save(str(image_path))
+
+        # 关闭PDF文件
+        doc.close()
+
+        logger.info(f"成功保存第{page_num}页幻灯片图片到: {image_path}")
+        return str(image_path)
+
+    except Exception as e:
+        logger.error(f"重新截取PDF第{page_num}页失败: {e}")
+        return None
+
 def merge_videos_with_real_digital_human():
     """使用真实生成的数字人视频合并分镜头视频"""
     logger = logging.getLogger(__name__)
     
     logger.info("=" * 60)
-    logger.info("🎬 开始分镜头视频合并流程")
-    logger.info("📝 使用真实生成的数字人视频，保留圆形遮罩效果")
+    logger.info("开始分镜头视频合并流程")
+    logger.info("使用真实生成的数字人视频，保留圆形遮罩效果")
     logger.info("=" * 60)
     
     start_time = time.time()
@@ -164,9 +239,17 @@ def merge_videos_with_real_digital_human():
             else:
                 # Head模式：组合PPT幻灯片和头部数字人视频 + 字幕
                 if not page_info['slide_image']:
-                    logger.warning(f"⚠️ 第{page_num}页没有找到幻灯片图片，跳过")
-                    continue
-                
+                    logger.warning(f"⚠️ 第{page_num}页没有找到幻灯片图片，尝试重新截取PDF...")
+
+                    # 尝试重新截取PDF图片
+                    slide_image = recapture_pdf_page(page_num)
+                    if slide_image:
+                        page_info['slide_image'] = slide_image
+                        logger.info(f"✅ 成功重新截取第{page_num}页幻灯片图片")
+                    else:
+                        logger.error(f"❌ 第{page_num}页重新截取PDF失败，跳过")
+                        continue
+
                 success = processor.combine_slide_with_video(
                     page_info['slide_image'],
                     original_video,
@@ -192,6 +275,7 @@ def merge_videos_with_real_digital_human():
         
         # 合并所有处理后的视频
         logger.info(f"🔧 开始合并所有处理后的视频...")
+        logger.info(f"📋 待合并视频文件: {processed_videos}")
         merged_video_path = processor.merge_videos(processed_videos, outputs_dir)
         
         if merged_video_path:
