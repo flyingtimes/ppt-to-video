@@ -45,12 +45,17 @@ class PPTReader:
             # 读取PDF页面
             pdf_pages = self._read_pdf_pages(pdf_file)
             
+            # 获取PDF基本信息
+            pdf_info = self._get_pdf_info(pdf_file)
+            
             return {
                 'ppt_file': str(ppt_path),
                 'pdf_file': pdf_file,
                 'ppt_content': ppt_content,
                 'pdf_pages': pdf_pages,
-                'total_pages': len(ppt_content)
+                'pdf_info': pdf_info,
+                'total_pages': len(ppt_content),
+                'file_info': self._get_file_info(ppt_path, Path(pdf_file))
             }
             
         except Exception as e:
@@ -119,3 +124,55 @@ class PPTReader:
             logger.error(f"读取PDF页面失败: {e}")
         
         return pages
+    
+    def _get_pdf_info(self, pdf_file: str) -> Dict[str, Any]:
+        """获取PDF文件基本信息"""
+        pdf_info = {
+            'total_pages': 0,
+            'file_size': 0,
+            'file_exists': False,
+            'is_readable': False,
+            'conversion_successful': False
+        }
+        
+        try:
+            pdf_path = Path(pdf_file)
+            if not pdf_path.exists():
+                logger.warning(f"PDF文件不存在: {pdf_file}")
+                return pdf_info
+            
+            pdf_info['file_exists'] = True
+            pdf_info['file_size'] = pdf_path.stat().st_size
+            
+            # 尝试读取PDF页面数量
+            images = convert_from_path(pdf_file)
+            pdf_info['total_pages'] = len(images)
+            pdf_info['is_readable'] = True
+            pdf_info['conversion_successful'] = True
+            
+            logger.info(f"PDF基本信息 - 总页数: {pdf_info['total_pages']}, "
+                       f"文件大小: {pdf_info['file_size']} 字节")
+            
+        except Exception as e:
+            logger.error(f"获取PDF信息失败: {e}")
+            pdf_info['is_readable'] = False
+        
+        return pdf_info
+    
+    def _get_file_info(self, ppt_path: Path, pdf_path: Path) -> Dict[str, Any]:
+        """获取文件信息"""
+        file_info = {
+            'ppt_file': {
+                'name': ppt_path.name,
+                'size': ppt_path.stat().st_size if ppt_path.exists() else 0,
+                'created': ppt_path.stat().st_ctime if ppt_path.exists() else 0,
+                'modified': ppt_path.stat().st_mtime if ppt_path.exists() else 0
+            },
+            'pdf_file': {
+                'name': pdf_path.name,
+                'size': pdf_path.stat().st_size if pdf_path.exists() else 0,
+                'created': pdf_path.stat().st_ctime if pdf_path.exists() else 0,
+                'modified': pdf_path.stat().st_mtime if pdf_path.exists() else 0
+            }
+        }
+        return file_info

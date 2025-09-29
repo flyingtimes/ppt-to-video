@@ -87,21 +87,45 @@ class RunningHubAPI:
         Returns:
             API响应结果
         """
+        start_time = time.time()
+        
+        logger.info(f"🚀 RunningHub API - 开始生成数字人视频")
+        logger.info(f"🎭 模式: {mode.upper()}")
+        logger.info(f"📝 文本长度: {len(text)}字符")
+        logger.info(f"👤 人物图片: {character_image_path}")
+        logger.info(f"🔊 参考音频: {reference_audio_path}")
+        logger.info(f"🎨 首次生成工作室图: {first_time}")
+        
         try:
+            # 检查配置
             if not self.api_key or not self.webapp_id:
-                logger.error("未配置API密钥或webapp_id")
+                logger.error("❌ 未配置API密钥或webapp_id")
+                logger.error(f"API Key: {'已配置' if self.api_key else '未配置'}")
+                logger.error(f"WebApp ID: {'已配置' if self.webapp_id else '未配置'}")
                 return None
             
+            logger.info(f"✅ API配置检查通过")
+            logger.info(f"🌐 API Base URL: {self.base_url}")
+            
             # 获取图片和音频文件的hash值
-            logger.info("计算图片和音频文件hash...")
+            logger.info(f"🔐 计算文件hash值...")
+            
+            hash_start = time.time()
             image_hash = self._get_file_hash(character_image_path)
             audio_hash = self._get_file_hash(reference_audio_path)
+            hash_time = time.time() - hash_start
+            
+            logger.info(f"⏱️ 文件hash计算耗时: {hash_time:.2f}秒")
+            logger.info(f"🖼️ 图片hash: {image_hash[:20]}...{image_hash[-10:] if image_hash else 'None'}")
+            logger.info(f"🔊 音频hash: {audio_hash[:20]}...{audio_hash[-10:] if audio_hash else 'None'}")
             
             if not image_hash or not audio_hash:
-                logger.error("文件hash计算失败")
+                logger.error("❌ 文件hash计算失败")
                 return None
             
             # 构建API请求数据
+            logger.info(f"📋 构建API请求数据...")
+            
             node_info_list = [
                 {
                     "nodeId": "55",
@@ -142,32 +166,58 @@ class RunningHubAPI:
                 "nodeInfoList": node_info_list
             }
             
-            logger.info(f"开始生成数字人视频，模式: {mode}，文本长度: {len(text)}")
+            logger.info(f"📤 发送API请求...")
+            logger.debug(f"请求URL: {self.base_url}/task/openapi/ai-app/run")
+            logger.debug(f"请求体大小: {len(json.dumps(request_data))}字节")
             
             # 发送请求
+            request_start = time.time()
             response = requests.post(
                 f"{self.base_url}/task/openapi/ai-app/run",
                 json=request_data,
                 headers={"Content-Type": "application/json"},
                 timeout=30
             )
+            request_time = time.time() - request_start
+            
+            logger.info(f"⏱️ API请求耗时: {request_time:.2f}秒")
+            logger.info(f"📊 响应状态码: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
+                logger.debug(f"响应内容: {result}")
+                
                 if result.get('code') == 0:
                     task_data = result.get('data', {})
                     task_id = task_data.get('taskId')
-                    logger.info(f"数字人视频生成请求成功，任务ID: {task_id}")
+                    total_time = time.time() - start_time
+                    
+                    logger.info(f"✅ 数字人视频生成请求成功！")
+                    logger.info(f"🆔 任务ID: {task_id}")
+                    logger.info(f"⏱️ 总耗时: {total_time:.2f}秒")
+                    
                     return task_data
                 else:
-                    logger.error(f"数字人视频生成请求失败: {result.get('msg')}")
+                    total_time = time.time() - start_time
+                    logger.error(f"❌ 数字人视频生成请求失败")
+                    logger.error(f"📋 错误码: {result.get('code')}")
+                    logger.error(f"💬 错误信息: {result.get('msg')}")
+                    logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
                     return None
             else:
-                logger.error(f"数字人视频生成请求失败: {response.status_code} - {response.text}")
+                total_time = time.time() - start_time
+                logger.error(f"❌ 数字人视频生成请求失败")
+                logger.error(f"📊 HTTP状态码: {response.status_code}")
+                logger.error(f"💬 响应内容: {response.text[:200]}..." if len(response.text) > 200 else f"💬 响应内容: {response.text}")
+                logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
                 return None
                 
         except Exception as e:
-            logger.error(f"生成数字人视频时发生错误: {e}")
+            total_time = time.time() - start_time
+            logger.error(f"❌ 生成数字人视频时发生错误: {e}")
+            logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
+            import traceback
+            logger.error(f"📋 错误详情: {traceback.format_exc()}")
             return None
     
     def get_task_status(self, task_id: str) -> Optional[str]:
@@ -320,7 +370,8 @@ class RunningHubAPI:
     
     def generate_digital_human_video_full(self, text: str, character_image_path: str,
                                         reference_audio_path: str, mode: str = "head",
-                                        first_time: bool = False) -> Optional[Dict[str, Any]]:
+                                        first_time: bool = False, 
+                                        save_task_id_callback=None) -> Optional[Dict[str, Any]]:
         """
         生成数字人视频的完整流程
         
@@ -330,6 +381,7 @@ class RunningHubAPI:
             reference_audio_path: 参考音频路径
             mode: 视频模式（full/head）
             first_time: 是否为第一次生成（需要工作室效果图）
+            save_task_id_callback: 保存任务ID的回调函数
             
         Returns:
             包含任务信息和文件路径的字典
@@ -341,25 +393,58 @@ class RunningHubAPI:
             )
             
             if not task_data:
+                logger.error("❌ 数字人视频生成请求失败")
                 return None
             
             task_id = task_data.get('taskId')
             if not task_id:
-                logger.error("未获取到任务ID")
+                logger.error("❌ 未获取到任务ID")
                 return None
+            
+            logger.info(f"✅ 任务提交成功，任务ID: {task_id}")
+            
+            # 立即保存任务ID到配置文件（通过回调函数）
+            if save_task_id_callback:
+                try:
+                    logger.info(f"💾 立即保存任务ID到配置文件...")
+                    save_task_id_callback(task_id, mode)
+                    logger.info(f"✅ 任务ID已保存到配置文件: {task_id}")
+                except Exception as e:
+                    logger.error(f"❌ 保存任务ID失败: {e}")
+                    # 继续执行，不因为保存失败而中断任务
             
             logger.info(f"等待任务完成: {task_id}")
             
             # 等待任务完成
             if not self.wait_for_task_completion(task_id):
-                logger.error("任务执行失败")
-                return None
+                logger.error("❌ 任务执行失败，但任务ID已保存")
+                # 返回任务ID信息，即使任务失败
+                return {
+                    "task_id": task_id,
+                    "mode": mode,
+                    "text": text,
+                    "studio_image_path": None,
+                    "video_path": None,
+                    "outputs": [],
+                    "task_failed": True,
+                    "error_message": "任务执行失败"
+                }
             
             # 获取输出结果
             outputs = self.get_task_outputs(task_id)
             if not outputs:
-                logger.error("未获取到输出结果")
-                return None
+                logger.warning("⚠️ 未获取到输出结果，但任务ID已保存")
+                # 返回任务ID信息，即使没有输出结果
+                return {
+                    "task_id": task_id,
+                    "mode": mode,
+                    "text": text,
+                    "studio_image_path": None,
+                    "video_path": None,
+                    "outputs": [],
+                    "task_failed": True,
+                    "error_message": "未获取到输出结果"
+                }
             
             # 解析输出结果
             result = {
@@ -368,7 +453,8 @@ class RunningHubAPI:
                 "text": text,
                 "studio_image_path": None,
                 "video_path": None,
-                "outputs": outputs
+                "outputs": outputs,
+                "task_failed": False
             }
             
             # 下载工作室效果图和视频
@@ -398,5 +484,7 @@ class RunningHubAPI:
             return result
             
         except Exception as e:
-            logger.error(f"生成数字人视频完整流程时发生错误: {e}")
+            logger.error(f"❌ 生成数字人视频完整流程时发生错误: {e}")
+            import traceback
+            logger.error(f"📋 错误详情: {traceback.format_exc()}")
             return None

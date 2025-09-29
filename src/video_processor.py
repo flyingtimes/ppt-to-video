@@ -4,6 +4,7 @@
 import os
 import subprocess
 import logging
+import time
 from PIL import Image, ImageDraw
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -53,7 +54,7 @@ class VideoProcessor:
     
     def create_circular_mask(self, size: int, output_path: str) -> bool:
         """
-        创建圆形遮罩图像
+        创建圆形遮罩图像，支持边缘柔和过渡
         
         Args:
             size: 遮罩大小（正方形边长）
@@ -67,11 +68,23 @@ class VideoProcessor:
             mask = Image.new('RGBA', (size, size), (0, 0, 0, 0))
             draw = ImageDraw.Draw(mask)
             
-            # 绘制白色圆形（不透明）
+            # 绘制多层圆形，实现边缘柔和过渡
             center = size // 2
-            radius = size // 2
-            draw.ellipse([center - radius, center - radius, center + radius, center + radius], 
-                        fill=(255, 255, 255, 255))
+            max_radius = size // 2
+            
+            # 外层到内层的渐变
+            for i in range(10):
+                radius = max_radius - i * 2
+                alpha = int(255 - i * 15)  # 渐变透明度
+                if alpha > 0 and radius > 0:
+                    draw.ellipse([center - radius, center - radius, center + radius, center + radius], 
+                                fill=(255, 255, 255, alpha))
+            
+            # 中心完全不透明
+            if max_radius > 20:
+                center_radius = max_radius - 20
+                draw.ellipse([center - center_radius, center - center_radius, center + center_radius, center + center_radius], 
+                            fill=(255, 255, 255, 255))
             
             # 保存遮罩图像
             mask.save(output_path)
@@ -159,6 +172,7 @@ class VideoProcessor:
                 )
             else:
                 # Head模式：组合PPT幻灯片和头部数字人视频 + 字幕
+                # 强制使用PPT背景 + 数字人前景组合
                 success = self.combine_slide_with_video(
                     str(page_data['slide_image']),
                     generated_video,
@@ -195,29 +209,52 @@ class VideoProcessor:
         Returns:
             合并后的视频文件路径
         """
+        start_time = time.time()
+        
+        logger.info(f"🎬 开始合并视频文件")
+        logger.info(f"📁 待合并视频数量: {len(video_files)}")
+        
         try:
             if not video_files:
-                logger.error("没有视频文件需要合并")
+                logger.error("❌ 没有视频文件需要合并")
                 return None
+            
+            # 统计视频文件信息
+            total_size = 0
+            for i, video_file in enumerate(video_files):
+                if os.path.exists(video_file):
+                    size = os.path.getsize(video_file)
+                    total_size += size
+                    logger.info(f"📹 视频{i+1}: {os.path.basename(video_file)} ({size/1024/1024:.2f} MB)")
+                else:
+                    logger.warning(f"⚠️ 视频文件不存在: {video_file}")
+            
+            logger.info(f"📊 总文件大小: {total_size/1024/1024:.2f} MB")
             
             # 输出文件路径
             output_video = work_dir / "merged_video.mp4"
+            logger.info(f"📁 输出路径: {output_video}")
             
             # 构建ffmpeg命令，使用concat filter
+            logger.info(f"🔧 构建FFmpeg命令...")
+            
             # 为每个视频文件添加输入参数
             input_args = []
             for video_file in video_files:
-                input_args.extend(['-i', video_file])
+                if os.path.exists(video_file):
+                    input_args.extend(['-i', video_file])
             
             # 构建filter_complex参数，先统一所有视频的分辨率到1920x1080
             scale_parts = []
             filter_parts = []
-            for i in range(len(video_files)):
+            video_count = len([f for f in video_files if os.path.exists(f)])
+            
+            for i in range(video_count):
                 scale_parts.append(f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[scaled{i}:v]")
                 filter_parts.append(f"[scaled{i}:v][{i}:a]")
             
             scale_complex = ';'.join(scale_parts)
-            filter_complex = scale_complex + ';' + ''.join(filter_parts) + f'concat=n={len(video_files)}:v=1:a=1[outv][outa]'
+            filter_complex = scale_complex + ';' + ''.join(filter_parts) + f'concat=n={video_count}:v=1:a=1[outv][outa]'
             
             cmd = ['ffmpeg'] + input_args + [
                 '-filter_complex', filter_complex,
@@ -232,19 +269,46 @@ class VideoProcessor:
                 str(output_video)
             ]
             
-            logger.info(f"开始合并 {len(video_files)} 个视频文件")
-            logger.info(f"FFmpeg命令: {' '.join(cmd)}")
+            logger.info(f"⚙️ 执行FFmpeg合并命令...")
+            logger.debug(f"FFmpeg命令: {' '.join(cmd)}")
+            
+            # 执行命令
+            merge_start = time.time()
             result = subprocess.run(cmd, capture_output=True, text=True)
+            merge_time = time.time() - merge_start
             
             if result.returncode == 0:
-                logger.info(f"视频合并完成: {output_video}")
-                return str(output_video)
+                total_time = time.time() - start_time
+                
+                if os.path.exists(output_video):
+                    output_size = os.path.getsize(output_video)
+                    logger.info(f"✅ 视频合并成功！")
+                    logger.info(f"📁 输出文件: {output_video}")
+                    logger.info(f"📦 输出大小: {output_size/1024/1024:.2f} MB")
+                    logger.info(f"⏱️ 合并耗时: {merge_time:.2f}秒")
+                    logger.info(f"⏱️ 总耗时: {total_time:.2f}秒")
+                    
+                    if result.stdout:
+                        logger.debug(f"FFmpeg输出: {result.stdout}")
+                    
+                    return str(output_video)
+                else:
+                    logger.error(f"❌ 输出文件不存在: {output_video}")
+                    return None
             else:
-                logger.error(f"视频合并失败: {result.stderr}")
+                total_time = time.time() - start_time
+                logger.error(f"❌ 视频合并失败")
+                logger.error(f"📊 返回码: {result.returncode}")
+                logger.error(f"💬 错误信息: {result.stderr}")
+                logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
                 return None
                 
         except Exception as e:
-            logger.error(f"合并视频失败: {e}")
+            total_time = time.time() - start_time
+            logger.error(f"❌ 合并视频时发生错误: {e}")
+            logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
+            import traceback
+            logger.error(f"📋 错误详情: {traceback.format_exc()}")
             return None
     
     def create_subtitle_image(self, text: str, output_path: str, width: int = 1920, height: int = 1080) -> bool:
@@ -453,18 +517,36 @@ class VideoProcessor:
         Returns:
             是否成功
         """
+        start_time = time.time()
+        
+        logger.info(f"🎬 开始组合视频内容")
+        logger.info(f"📄 页面编号: 第{page_number}页")
+        logger.info(f"🎭 模式: {'FULL' if is_full_mode else 'HEAD'}")
+        logger.info(f"📹 视频文件: {os.path.basename(video_file)}")
+        logger.info(f"📁 输出文件: {output_file}")
+        logger.info(f"📝 字幕长度: {len(subtitle_text)}字符")
+        
         try:
             # 如果有字幕文本，创建字幕图像
             subtitle_path = None
             if subtitle_text and subtitle_text.strip():
+                logger.info(f"📝 创建字幕图像...")
                 subtitle_path = work_dir / f"subtitle_page_{page_number:03d}.png"
+                
+                subtitle_start = time.time()
                 if not self.create_subtitle_image(subtitle_text.strip(), str(subtitle_path)):
-                    logger.error("创建字幕图像失败")
+                    logger.error(f"❌ 创建字幕图像失败")
                     return False
+                subtitle_time = time.time() - subtitle_start
+                logger.info(f"✅ 字幕图像创建完成，耗时: {subtitle_time:.2f}秒")
+            else:
+                logger.info(f"ℹ️ 无字幕文本，跳过字幕创建")
             
             if is_full_mode:
+                logger.info(f"🎭 使用Full模式处理...")
                 # Full模式：数字人视频 + 字幕
                 if subtitle_path:
+                    logger.info(f"📝 组合视频和字幕...")
                     cmd = [
                         'ffmpeg',
                         '-i', video_file,
@@ -479,20 +561,33 @@ class VideoProcessor:
                         output_file
                     ]
                 else:
+                    logger.info(f"ℹ️ 无字幕，直接复制视频文件...")
                     # 没有字幕，直接复制视频
                     import shutil
                     shutil.copy2(video_file, output_file)
+                    total_time = time.time() - start_time
+                    logger.info(f"✅ Full模式处理完成！")
+                    logger.info(f"⏱️ 耗时: {total_time:.2f}秒")
                     return True
             else:
+                logger.info(f"🎭 使用Head模式处理...")
                 # Head模式：组合幻灯片和头部视频 + 字幕
-                # 创建圆形遮罩
-                mask_path = work_dir / "circular_mask.png"
-                if not self.create_circular_mask(320, str(mask_path)):
-                    logger.error("创建圆形遮罩失败")
-                    return False
                 
+                # 创建圆形遮罩
+                logger.info(f"🔲 创建圆形遮罩...")
+                mask_path = work_dir / "circular_mask.png"
+                
+                mask_start = time.time()
+                if not self.create_circular_mask(280, str(mask_path)):
+                    logger.error(f"❌ 创建圆形遮罩失败")
+                    return False
+                mask_time = time.time() - mask_start
+                logger.info(f"✅ 圆形遮罩创建完成，耗时: {mask_time:.2f}秒")
+                
+                logger.info(f"🔧 构建FFmpeg命令...")
                 if subtitle_path:
-                    # 有字幕的情况
+                    logger.info(f"📝 组合幻灯片、视频、遮罩和字幕...")
+                    # 有字幕的情况 - 优化视频叠加效果
                     cmd = [
                         'ffmpeg',
                         '-i', slide_image,
@@ -500,7 +595,7 @@ class VideoProcessor:
                         '-i', str(mask_path),
                         '-i', str(subtitle_path),
                         '-filter_complex', 
-                        '[0:v]scale=1920:1080[bg];[1:v]scale=320:320[fg];[2:v]alphaextract[mask];[fg][mask]alphamerge[masked_fg];[bg][masked_fg]overlay=1550:710[with_person];[with_person][3:v]overlay=format=auto',
+                        '[0:v]scale=1920:1080,format=rgba,colorchannelmixer=aa=1.0[bg];[1:v]scale=280:280[fg];[2:v]alphaextract[mask];[fg][mask]alphamerge[masked_fg];[bg][masked_fg]overlay=1600:720:format=auto[with_person];[with_person][3:v]overlay=format=auto,format=yuv420p',
                         '-c:v', 'libx264',
                         '-preset', 'fast',
                         '-crf', '23',
@@ -509,14 +604,15 @@ class VideoProcessor:
                         output_file
                     ]
                 else:
-                    # 没有字幕的情况
+                    logger.info(f"📐 组合幻灯片、视频和遮罩...")
+                    # 没有字幕的情况 - 优化视频叠加效果
                     cmd = [
                         'ffmpeg',
                         '-i', slide_image,
                         '-i', video_file,
                         '-i', str(mask_path),
                         '-filter_complex', 
-                        '[0:v]scale=1920:1080[bg];[1:v]scale=320:320[fg];[2:v]alphaextract[mask];[fg][mask]alphamerge[masked_fg];[bg][masked_fg]overlay=1550:710',
+                        '[0:v]scale=1920:1080,format=rgba,colorchannelmixer=aa=1.0[bg];[1:v]scale=280:280[fg];[2:v]alphaextract[mask];[fg][mask]alphamerge[masked_fg];[bg][masked_fg]overlay=1600:720:format=auto,format=yuv420p',
                         '-c:v', 'libx264',
                         '-preset', 'fast',
                         '-crf', '23',
@@ -527,13 +623,42 @@ class VideoProcessor:
             
             # 执行FFmpeg命令（如果有字幕的话）
             if subtitle_path or not is_full_mode:
+                logger.info(f"⚙️ 执行FFmpeg组合命令...")
+                logger.debug(f"FFmpeg命令: {' '.join(cmd)}")
+                
+                ffmpeg_start = time.time()
                 result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    logger.error(f"FFmpeg命令执行失败: {result.stderr}")
-                return result.returncode == 0
+                ffmpeg_time = time.time() - ffmpeg_start
+                
+                if result.returncode == 0:
+                    total_time = time.time() - start_time
+                    if os.path.exists(output_file):
+                        output_size = os.path.getsize(output_file)
+                        logger.info(f"✅ 视频组合成功！")
+                        logger.info(f"📁 输出文件: {output_file}")
+                        logger.info(f"📦 文件大小: {output_size/1024/1024:.2f} MB")
+                        logger.info(f"⏱️ FFmpeg耗时: {ffmpeg_time:.2f}秒")
+                        logger.info(f"⏱️ 总耗时: {total_time:.2f}秒")
+                        
+                        if result.stdout:
+                            logger.debug(f"FFmpeg输出: {result.stdout}")
+                    else:
+                        logger.error(f"❌ 输出文件不存在: {output_file}")
+                        return False
+                else:
+                    total_time = time.time() - start_time
+                    logger.error(f"❌ FFmpeg命令执行失败")
+                    logger.error(f"📊 返回码: {result.returncode}")
+                    logger.error(f"💬 错误信息: {result.stderr}")
+                    logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
+                    return False
             
             return True
                 
         except Exception as e:
-            logger.error(f"组合幻灯片和视频失败: {e}")
+            total_time = time.time() - start_time
+            logger.error(f"❌ 组合幻灯片和视频时发生错误: {e}")
+            logger.error(f"⏱️ 失败时已运行: {total_time:.2f}秒")
+            import traceback
+            logger.error(f"📋 错误详情: {traceback.format_exc()}")
             return False

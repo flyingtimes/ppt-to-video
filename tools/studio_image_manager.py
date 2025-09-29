@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 class StudioImageManager:
     """工作室效果图管理器"""
     
-    def __init__(self):
+    def __init__(self, task_status_file_path: str = None):
         self.api = RunningHubAPI()
-        self.config_path = "output/config.json"
+        self.task_status_file_path = task_status_file_path
         
         # 从环境变量获取配置
         self.character_image_path = os.getenv('CHARACTER_IMAGE_PATH', 'characters/man/input.png')
@@ -37,61 +37,75 @@ class StudioImageManager:
         self.config = self._load_config()
     
     def _load_config(self) -> Dict[str, Any]:
-        """加载配置文件"""
+        """加载任务状态文件"""
         try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            if self.task_status_file_path and os.path.exists(self.task_status_file_path):
+                with open(self.task_status_file_path, 'r', encoding='utf-8') as f:
+                    task_status = json.load(f)
+                    
+                # 如果任务状态文件中没有配置信息，则初始化
+                if 'runninghub_config' not in task_status:
+                    task_status['runninghub_config'] = {
+                        "api_key": os.getenv('RUNNINGHUB_API_KEY'),
+                        "base_url": os.getenv('RUNNINGHUB_BASE_URL', 'https://www.runninghub.cn'),
+                        "webapp_id": os.getenv('RUNNINGHUB_WEBAPP_ID')
+                    }
+                if 'character_config' not in task_status:
+                    task_status['character_config'] = {
+                        "image_path": self.character_image_path,
+                        "reference_audio_path": self.reference_audio_path,
+                        "full_studio_image_path": self.full_studio_image_path,
+                        "head_studio_image_path": self.head_studio_image_path
+                    }
+                if 'studio_images' not in task_status:
+                    task_status['studio_images'] = {
+                        "full": "",
+                        "head": ""
+                    }
+                
+                return task_status
             else:
-                logger.warning("配置文件不存在，将创建默认配置")
-                return self._create_default_config()
+                logger.warning("任务状态文件路径未设置，使用内存配置")
+                return {
+                    "runninghub_config": {
+                        "api_key": os.getenv('RUNNINGHUB_API_KEY'),
+                        "base_url": os.getenv('RUNNINGHUB_BASE_URL', 'https://www.runninghub.cn'),
+                        "webapp_id": os.getenv('RUNNINGHUB_WEBAPP_ID')
+                    },
+                    "character_config": {
+                        "image_path": self.character_image_path,
+                        "reference_audio_path": self.reference_audio_path,
+                        "full_studio_image_path": self.full_studio_image_path,
+                        "head_studio_image_path": self.head_studio_image_path
+                    },
+                    "studio_images": {
+                        "full": "",
+                        "head": ""
+                    }
+                }
         except Exception as e:
-            logger.error(f"加载配置文件失败: {e}")
+            logger.error(f"加载任务状态文件失败: {e}")
             return {}
     
-    def _create_default_config(self) -> Dict[str, Any]:
-        """创建默认配置"""
-        default_config = {
-            "runninghub_config": {
-                "api_key": os.getenv('RUNNINGHUB_API_KEY'),
-                "base_url": os.getenv('RUNNINGHUB_BASE_URL', 'https://www.runninghub.cn'),
-                "webapp_id": os.getenv('RUNNINGHUB_WEBAPP_ID')
-            },
-            "character_config": {
-                "image_path": self.character_image_path,
-                "reference_audio_path": self.reference_audio_path,
-                "full_studio_image_path": self.full_studio_image_path,
-                "head_studio_image_path": self.head_studio_image_path
-            },
-            "tasks": {
-                "full_videos": [],
-                "head_videos": []
-            },
-            "studio_images": {
-                "full": "",
-                "head": ""
-            },
-            "current_project": "",
-            "last_update": ""
-        }
-        self._save_config(default_config)
-        return default_config
     
     def _save_config(self, config: Dict[str, Any]):
-        """保存配置文件"""
+        """保存配置到任务状态文件"""
         try:
             import time
             config["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
             
-            # 确保output目录存在
-            Path("output").mkdir(exist_ok=True)
-            
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            
-            logger.info("配置文件保存成功")
+            if self.task_status_file_path:
+                # 确保input目录存在
+                Path(self.task_status_file_path).parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(self.task_status_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+                
+                logger.info(f"任务状态文件保存成功: {self.task_status_file_path}")
+            else:
+                logger.warning("任务状态文件路径未设置，跳过保存")
         except Exception as e:
-            logger.error(f"保存配置文件失败: {e}")
+            logger.error(f"保存配置失败: {e}")
     
     def generate_studio_image(self, mode: str) -> Optional[str]:
         """
