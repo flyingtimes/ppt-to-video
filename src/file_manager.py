@@ -25,12 +25,12 @@ class FileManager:
     def get_ppt_files(self) -> List[str]:
         """
         获取输入文件夹中的所有PPT文件
-        
+
         Returns:
             PPT文件路径列表
         """
         ppt_files = []
-        
+
         try:
             for file_path in self.input_dir.glob("*.ppt*"):
                 if file_path.suffix.lower() in ['.pptx', '.ppt']:
@@ -40,11 +40,71 @@ class FileManager:
                         ppt_files.append(str(file_path))
                     else:
                         logger.warning(f"未找到对应的PDF文件: {file_path}")
-            
+
         except Exception as e:
             logger.error(f"获取PPT文件失败: {e}")
-        
+
         return ppt_files
+
+    def validate_ppt_file(self, ppt_file: str) -> Dict[str, Any]:
+        """
+        验证指定的PPT文件
+
+        Args:
+            ppt_file: PPT文件路径
+
+        Returns:
+            验证结果字典，包含是否有效、文件信息等
+        """
+        try:
+            ppt_path = Path(ppt_file)
+
+            # 检查文件是否存在
+            if not ppt_path.exists():
+                return {
+                    'valid': False,
+                    'error': f"文件不存在: {ppt_file}",
+                    'file_info': {}
+                }
+
+            # 检查文件扩展名
+            if ppt_path.suffix.lower() not in ['.pptx', '.ppt']:
+                return {
+                    'valid': False,
+                    'error': f"不支持的文件格式: {ppt_path.suffix}",
+                    'file_info': {}
+                }
+
+            # 获取文件信息
+            file_info = {
+                'name': ppt_path.name,
+                'size': ppt_path.stat().st_size,
+                'path': str(ppt_path.absolute()),
+                'directory': str(ppt_path.parent)
+            }
+
+            # 检查是否有对应的PDF文件
+            pdf_path = ppt_path.with_suffix('.pdf')
+            pdf_exists = pdf_path.exists()
+            if not pdf_exists:
+                logger.warning(f"⚠️ 未找到对应的PDF文件: {pdf_path}")
+                logger.warning(f"💡 系统将尝试自动转换PPT为PDF")
+
+            return {
+                'valid': True,
+                'error': None,
+                'file_info': file_info,
+                'pdf_exists': pdf_exists,
+                'pdf_path': str(pdf_path)
+            }
+
+        except Exception as e:
+            logger.error(f"验证PPT文件时发生错误: {e}")
+            return {
+                'valid': False,
+                'error': f"验证文件时发生错误: {str(e)}",
+                'file_info': {}
+            }
     
     def create_work_dir(self, ppt_file: str) -> Path:
         """

@@ -8,6 +8,7 @@ import time
 import logging
 import shutil
 import tempfile
+import argparse
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -1101,71 +1102,215 @@ class TaskManager:
             return False
 
     def combine_videos(self, task_status: Dict[str, Any]) -> bool:
-        """组合所有视频成一个完整视频"""
+        """组合所有视频成一个完整视频 - 直接合并所有现有视频文件，不考虑任务状态"""
         try:
-            # 收集所有已完成的视频文件
-            video_paths = []
-            for task in task_status['tasks']:
-                if task['status'] == 'completed':
-                    video_path = task.get('video_path')
-                    if video_path and os.path.exists(video_path):
-                        video_paths.append(video_path)
-                    else:
-                        logger.warning(f"视频文件不存在: {video_path}")
-            
-            if not video_paths:
-                logger.error("没有找到可组合的视频文件")
-                return False
-            
-            # 按页码排序
-            video_paths.sort()
-            
-            # 生成输出路径
-            project_name = task_status['project_name']
-            output_path = f"outputs/{project_name}_final_video.mp4"
-            
-            logger.info(f"开始组合 {len(video_paths)} 个视频文件...")
-            
-            # 使用视频处理器组合视频
+            logger.info(f"🎬 开始合并所有现有视频文件...")
+
+            # 初始化视频处理器
             video_processor = VideoProcessor()
-            result = video_processor.merge_videos(video_paths, Path(output_path).parent)
-            
+
+            # 扫描outputs目录中的视频文件
+            outputs_dir = Path("outputs")
+            if not outputs_dir.exists():
+                logger.error(f"❌ outputs目录不存在: {outputs_dir}")
+                return False
+
+            # 查找所有video_page_开头的mp4文件
+            video_files = []
+            for video_file in outputs_dir.glob("video_page_*.mp4"):
+                if video_file.exists():  # 确保文件存在
+                    video_files.append(video_file)
+
+            if not video_files:
+                logger.error(f"❌ 在outputs目录中未找到video_page_*.mp4格式的视频文件")
+                logger.error(f"💡 请确保存在要合并的视频文件")
+                return False
+
+            # 按文件名排序确保顺序正确
+            video_files.sort()
+
+            logger.info(f"📊 找到 {len(video_files)} 个视频文件")
+
+            # 显示找到的视频文件信息
+            total_size = 0
+            video_paths = []
+            for i, video_file in enumerate(video_files, 1):
+                if video_file.exists():
+                    size = video_file.stat().st_size
+                    total_size += size
+                    video_paths.append(str(video_file))
+                    logger.info(f"📹 视频{i}: {video_file.name} ({size / 1024 / 1024:.2f} MB)")
+                else:
+                    logger.warning(f"⚠️ 视频文件不存在: {video_file}")
+
+            logger.info(f"📊 总文件大小: {total_size / 1024 / 1024:.2f} MB")
+
+            # 生成输出文件名（带时间戳避免覆盖）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = outputs_dir / f"merged_video_{timestamp}.mp4"
+
+            logger.info(f"🎬 开始合并视频文件...")
+            logger.info(f"📁 输出路径: {output_path}")
+
+            # 执行视频合并
+            result = video_processor.merge_videos(video_paths, outputs_dir)
+
             if result:
-                # 获取实际生成的文件路径和大小
-                actual_output_path = f"outputs/merged_video.mp4"
-                if os.path.exists(actual_output_path):
-                    file_size = os.path.getsize(actual_output_path)
-                    logger.info(f"最终视频组合完成！")
-                    logger.info(f"文件路径: {actual_output_path}")
-                    logger.info(f"文件大小: {file_size / 1024 / 1024:.2f} MB")
-                    
-                    # 更新任务状态
-                    task_status['final_video_path'] = actual_output_path
+                # 重命名生成的文件
+                default_output = outputs_dir / "merged_video.mp4"
+                if default_output.exists():
+                    default_output.rename(output_path)
+
+                # 获取实际文件大小
+                if output_path.exists():
+                    file_size = output_path.stat().st_size
+                    logger.info(f"🎉 视频合并完成！")
+                    logger.info(f"📁 输出文件: {output_path}")
+                    logger.info(f"📊 文件大小: {file_size / 1024 / 1024:.2f} MB")
+
+                    # 更新任务状态（可选）
+                    task_status['final_video_path'] = str(output_path)
                     task_status['final_video_size'] = file_size
                     task_status['completion_time'] = datetime.now().isoformat()
                     self.save_task_status(task_status)
-                    
+
                     return True
                 else:
-                    logger.error(f"合并后的视频文件不存在: {actual_output_path}")
+                    logger.error(f"❌ 合并后的视频文件不存在: {output_path}")
                     return False
             else:
-                logger.error("视频组合失败")
+                logger.error(f"❌ 视频合并失败")
                 return False
-                
+
         except Exception as e:
-            logger.error(f"组合视频时发生错误: {e}")
+            logger.error(f"❌ 合并视频时发生错误: {e}")
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
             return False
+
+
+def parse_arguments():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(
+        description='PPT转数字人视频处理系统',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+  python main.py                                 # 运行完整的PPT处理流程（自动扫描input文件夹）
+  python main.py -c                              # 仅组合现有视频文件
+  python main.py -i input/presentation.pptx     # 处理指定的PPT文件
+        """
+    )
+
+    parser.add_argument(
+        '-c', '--combine',
+        action='store_true',
+        help='仅组合现有的视频文件，不进行新的PPT处理'
+    )
+
+    parser.add_argument(
+        '-i', '--input',
+        type=str,
+        metavar='PPT_FILE',
+        help='指定要处理的PPT文件路径（支持.pptx和.ppt文件）'
+    )
+
+    return parser.parse_args()
 
 
 def main():
     """主程序入口"""
+    # 解析命令行参数
+    args = parse_arguments()
+
     program_start_time = time.time()
-    
+
     logger.info(f"🚀 PPT转数字人视频处理系统启动")
     logger.info(f"📅 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"🐍 Python版本: {os.sys.version}")
     logger.info(f"📁 工作目录: {os.getcwd()}")
+
+    # 检查参数冲突
+    if args.combine and args.input:
+        logger.error(f"❌ 参数冲突：-c/--combine 和 -i/--input 参数不能同时使用")
+        logger.error(f"💡 -c/--combine 用于组合现有视频，-i/--input 用于处理新的PPT文件")
+        return
+
+    # 如果指定了-c参数，直接运行组合视频功能
+    if args.combine:
+        logger.info(f"🎬 检测到-c参数，开始按顺序合并所有现有视频文件...")
+
+        try:
+            # 初始化视频处理器
+            video_processor = VideoProcessor()
+
+            # 扫描outputs目录中的视频文件
+            outputs_dir = Path("outputs")
+            if not outputs_dir.exists():
+                logger.error(f"❌ outputs目录不存在: {outputs_dir}")
+                return
+
+            # 查找所有video_page_开头的mp4文件
+            video_files = []
+            for video_file in outputs_dir.glob("video_page_*.mp4"):
+                video_files.append(video_file)
+
+            if not video_files:
+                logger.error(f"❌ 在outputs目录中未找到video_page_*.mp4格式的视频文件")
+                logger.error(f"💡 请确保存在要合并的视频文件")
+                return
+
+            # 按文件名排序确保顺序正确
+            video_files.sort()
+
+            logger.info(f"📊 找到 {len(video_files)} 个视频文件")
+
+            # 显示找到的视频文件信息
+            total_size = 0
+            for i, video_file in enumerate(video_files, 1):
+                if video_file.exists():
+                    size = video_file.stat().st_size
+                    total_size += size
+                    logger.info(f"📹 视频{i}: {video_file.name} ({size / 1024 / 1024:.2f} MB)")
+                else:
+                    logger.warning(f"⚠️ 视频文件不存在: {video_file}")
+
+            logger.info(f"📊 总文件大小: {total_size / 1024 / 1024:.2f} MB")
+
+            # 生成输出文件名（带时间戳避免覆盖）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = outputs_dir / f"merged_video_{timestamp}.mp4"
+
+            logger.info(f"🎬 开始合并视频文件...")
+            logger.info(f"📁 输出路径: {output_path}")
+
+            # 执行视频合并
+            result = video_processor.merge_videos([str(f) for f in video_files], outputs_dir)
+
+            if result:
+                # 重命名生成的文件
+                default_output = outputs_dir / "merged_video.mp4"
+                if default_output.exists():
+                    default_output.rename(output_path)
+
+                # 获取实际文件大小
+                if output_path.exists():
+                    file_size = output_path.stat().st_size
+                    logger.info(f"🎉 视频合并完成！")
+                    logger.info(f"📁 输出文件: {output_path}")
+                    logger.info(f"📊 文件大小: {file_size / 1024 / 1024:.2f} MB")
+                    logger.info(f"💡 使用命令: python -c \"import os; print(f'播放: {output_path}')\"")
+                else:
+                    logger.error(f"❌ 合并后的视频文件不存在: {output_path}")
+            else:
+                logger.error(f"❌ 视频合并失败")
+
+        except Exception as e:
+            logger.error(f"❌ 合并视频时发生错误: {e}")
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
+
+        return
     
     try:
         # 初始化任务管理器
@@ -1272,28 +1417,61 @@ def main():
         else:
             # 开始新的任务
             logger.info(f"🆕 开始新的处理任务...")
-            
+
             # 初始化文件管理器
             logger.info(f"📁 初始化文件管理器...")
             file_manager = FileManager()
-            
-            # 获取输入文件夹中的PPT文件
-            logger.info(f"🔍 扫描输入文件夹中的PPT文件...")
-            ppt_files = file_manager.get_ppt_files()
-            if not ppt_files:
-                logger.error(f"❌ 输入文件夹中没有找到PPT文件")
-                logger.error(f"📁 请检查input文件夹中是否有.pptx或.ppt文件")
-                return
-            
-            # 处理第一个PPT文件
-            ppt_file = ppt_files[0]
-            file_size = os.path.getsize(ppt_file) if os.path.exists(ppt_file) else 0
-            logger.info(f"📄 找到PPT文件: {os.path.basename(ppt_file)} ({file_size/1024/1024:.2f} MB)")
+
+            # 处理指定的PPT文件或扫描input文件夹
+            ppt_file = None
+            if args.input:
+                # 使用指定的PPT文件
+                logger.info(f"🔍 验证指定的PPT文件...")
+                validation_result = file_manager.validate_ppt_file(args.input)
+
+                if not validation_result['valid']:
+                    logger.error(f"❌ PPT文件验证失败: {validation_result['error']}")
+                    return
+
+                ppt_file = args.input
+                file_info = validation_result['file_info']
+
+                logger.info(f"📄 使用指定的PPT文件: {file_info['name']}")
+                logger.info(f"📊 文件大小: {file_info['size']/1024/1024:.2f} MB")
+                logger.info(f"📁 文件路径: {file_info['path']}")
+
+                if not validation_result['pdf_exists']:
+                    logger.warning(f"⚠️ 未找到对应的PDF文件")
+                    logger.warning(f"💡 系统将尝试自动转换PPT为PDF")
+            else:
+                # 扫描input文件夹中的PPT文件
+                logger.info(f"🔍 扫描输入文件夹中的PPT文件...")
+                ppt_files = file_manager.get_ppt_files()
+                if not ppt_files:
+                    logger.error(f"❌ 输入文件夹中没有找到PPT文件")
+                    logger.error(f"📁 请检查input文件夹中是否有.pptx或.ppt文件，或使用 -i 参数指定PPT文件")
+                    return
+
+                # 处理第一个PPT文件
+                ppt_file = ppt_files[0]
+                file_size = os.path.getsize(ppt_file) if os.path.exists(ppt_file) else 0
+                logger.info(f"📄 在input文件夹中找到PPT文件: {os.path.basename(ppt_file)} ({file_size/1024/1024:.2f} MB)")
             
             # 设置任务状态文件路径
             ppt_path = Path(ppt_file)
-            input_folder = Path("input")
-            task_manager.task_status_file = input_folder / ppt_path.with_suffix('.json').name
+
+            # 如果是指定的PPT文件，将任务状态文件放在input文件夹中
+            if args.input:
+                # 对于指定的PPT文件，状态文件放在input文件夹中，使用PPT文件名
+                input_folder = Path("input")
+                task_manager.task_status_file = input_folder / ppt_path.with_suffix('.json').name
+                # 确保input文件夹存在
+                input_folder.mkdir(exist_ok=True)
+            else:
+                # 对于input文件夹中的PPT文件，保持原有逻辑
+                input_folder = Path("input")
+                task_manager.task_status_file = input_folder / ppt_path.with_suffix('.json').name
+
             logger.info(f"📝 任务状态文件路径: {task_manager.task_status_file}")
             
             # 检查是否已存在任务状态文件

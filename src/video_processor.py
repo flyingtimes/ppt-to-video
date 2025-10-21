@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from src.video_generator import DigitalHumanVideoGenerator
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +23,14 @@ class VideoProcessor:
     # 字幕配置类
     class SubtitleConfig:
         """字幕配置"""
-        FONT_SIZE = 20
-        TEXT_COLOR = (255, 255, 224, 255)  # 浅黄色
-        STROKE_COLOR = (0, 0, 0, 255)  # 黑色描边
-        STROKE_WIDTH = 1
-        LINE_SPACING = 5
-        BOTTOM_MARGIN = 100  # 距离底部边缘的距离
-        MAX_WIDTH_RATIO = 0.8  # 文本最大宽度比例
+        ENABLED = os.getenv('ENABLE_SUBTITLES', 'true').lower() == 'true'
+        FONT_SIZE = int(os.getenv('SUBTITLE_FONT_SIZE', '20'))
+        TEXT_COLOR = tuple(map(int, os.getenv('SUBTITLE_TEXT_COLOR', '255,255,224,255').split(',')))  # 浅黄色
+        STROKE_COLOR = tuple(map(int, os.getenv('SUBTITLE_STROKE_COLOR', '0,0,0,255').split(',')))  # 黑色描边
+        STROKE_WIDTH = int(os.getenv('SUBTITLE_STROKE_WIDTH', '1'))
+        LINE_SPACING = int(os.getenv('SUBTITLE_LINE_SPACING', '5'))
+        BOTTOM_MARGIN = int(os.getenv('SUBTITLE_BOTTOM_MARGIN', '100'))  # 距离底部边缘的距离
+        MAX_WIDTH_RATIO = float(os.getenv('SUBTITLE_MAX_WIDTH_RATIO', '0.8'))  # 文本最大宽度比例
         
         # 字体优先级列表
         FONT_CANDIDATES = [
@@ -519,12 +523,12 @@ class VideoProcessor:
         logger.info(f"📝 字幕长度: {len(subtitle_text)}字符")
         
         try:
-            # 如果有字幕文本，创建字幕图像
+            # 如果有字幕文本且字幕功能已启用，创建字幕图像
             subtitle_path = None
-            if subtitle_text and subtitle_text.strip():
+            if subtitle_text and subtitle_text.strip() and self.SubtitleConfig.ENABLED:
                 logger.info(f"📝 创建字幕图像...")
                 subtitle_path = work_dir / f"subtitle_page_{page_number:03d}.png"
-                
+
                 subtitle_start = time.time()
                 if not self.create_subtitle_image(subtitle_text.strip(), str(subtitle_path)):
                     logger.error(f"❌ 创建字幕图像失败")
@@ -532,7 +536,10 @@ class VideoProcessor:
                 subtitle_time = time.time() - subtitle_start
                 logger.info(f"✅ 字幕图像创建完成，耗时: {subtitle_time:.2f}秒")
             else:
-                logger.info(f"ℹ️ 无字幕文本，跳过字幕创建")
+                if not self.SubtitleConfig.ENABLED:
+                    logger.info(f"ℹ️ 字幕功能已禁用，跳过字幕创建")
+                elif not subtitle_text or not subtitle_text.strip():
+                    logger.info(f"ℹ️ 无字幕文本，跳过字幕创建")
             
             if is_full_mode:
                 logger.info(f"🎭 使用Full模式处理...")

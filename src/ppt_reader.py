@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pptx import Presentation
 from pdf2image import convert_from_path
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -105,24 +106,46 @@ class PPTReader:
     def _read_pdf_pages(self, pdf_file: str) -> List[str]:
         """读取PDF文件，转换为图片路径列表"""
         pages = []
-        
+
         try:
             # 转换PDF为图片
             images = convert_from_path(pdf_file)
-            
+
+            if not images:
+                logger.warning("没有从PDF中转换出任何图片")
+                return pages
+
+            # 获取第一张图片的尺寸作为标准尺寸
+            first_image = images[0]
+            standard_width, standard_height = first_image.size
+
+            logger.info(f"使用标准尺寸: {standard_width}x{standard_height}")
+
             for i, image in enumerate(images):
                 # 保存图片到临时目录
                 temp_dir = Path("temp")
                 temp_dir.mkdir(exist_ok=True)
-                
+
                 image_path = temp_dir / f"page_{i+1}.png"
-                image.save(image_path, 'PNG')
-                
+
+                # 检查尺寸是否一致，如果不一致则调整
+                current_width, current_height = image.size
+                if (current_width, current_height) != (standard_width, standard_height):
+                    logger.info(f"第{i+1}页图片尺寸 {current_width}x{current_height} 调整为标准尺寸 {standard_width}x{standard_height}")
+                    # 调整图片尺寸
+                    resized_image = image.resize((standard_width, standard_height), Image.Resampling.LANCZOS)
+                    resized_image.save(image_path, 'PNG')
+                else:
+                    # 尺寸一致，直接保存
+                    image.save(image_path, 'PNG')
+
                 pages.append(str(image_path))
-                
+
+            logger.info(f"成功转换并保存了 {len(pages)} 张图片")
+
         except Exception as e:
             logger.error(f"读取PDF页面失败: {e}")
-        
+
         return pages
     
     def _get_pdf_info(self, pdf_file: str) -> Dict[str, Any]:

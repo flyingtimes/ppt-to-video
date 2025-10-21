@@ -8,6 +8,9 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +113,7 @@ class TaskConfigGenerator:
                 "check_interval": 20,
                 "combine_videos": True,
                 "generate_thumbnails": True,
-                "generate_subtitles": True
+                "generate_subtitles": os.getenv('ENABLE_SUBTITLES', 'true').lower() == 'true'
             },
             
             "tasks": tasks,
@@ -154,7 +157,7 @@ class TaskConfigGenerator:
                 "audio_bitrate": "128k",
                 "format": "mp4",
                 "quality": "high",
-                "subtitle_enabled": True,
+                "subtitle_enabled": os.getenv('ENABLE_SUBTITLES', 'true').lower() == 'true',
                 "subtitle_font": "Arial",
                 "subtitle_size": 24,
                 "subtitle_color": "#FFFFFF",
